@@ -78,10 +78,17 @@ view, so they stay fast with thousands of items or lines.
 | `Split` | two panes side by side, or one above the other (`SetRatio`) | dragging the divider |
 | `TextField` | one line of text | editing keys; Enter submits (`ACT_OPEN`) |
 | `Editor` | a code editor: a gutter of line numbers, highlighting (`SetSyntax`) | below |
-| `Palette` | a command palette over items, above everything (`OpenPalette`) | typing filters (characters in order, best first); Enter chooses (`ACT_OPEN`), Escape closes (`ACT_CANCEL`) |
+| `Palette` | a command palette over items, above everything (`OpenPalette`), or a prompt for a line of text with a title (`OpenPrompt`, `PaletteText`) | typing filters (characters in order, best first); Enter chooses (`ACT_OPEN`; a prompt answers with `PROMPT_ITEM`), Escape closes (`ACT_CANCEL`) |
+| `MenuBar` | menus across the top (`AddMenu`, then `AddMenuItem` with a shortcut to show; `"-"` is a separator) | a click opens a menu and choosing an entry gives `ACT_OPEN` with its item; F10 or Alt with a title's first letter, the arrows, Enter, Escape |
+
+List and tree items can have an icon before their label (`SetItemIcon` with an `ICON_*`:
+folder, file, the EnvoL mark, Markdown, JSON, image, binary, code, settings).
 
 Text fields and editors are `envoui.edit` buffers: `Buffer(id)[0]` gives the whole editing
 API, `Value` and `SetValue` the text, and `RevealCursor` scrolls the cursor into view.
+One editor can switch among many documents, each with its own text, cursor and history:
+`NewDocument` makes one, `ShowDocument` puts it in an editor, `Document(doc)[0]` edits it
+wherever it is, and `FreeDocument` lets its number be used again.
 Editing keys: arrows (Ctrl for words), Home and End (Ctrl for the whole text), the page
 keys, Shift to select, Backspace, Delete, Enter (indented), Tab and Shift+Tab (indent),
 Ctrl+A, Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z), Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+D (select the

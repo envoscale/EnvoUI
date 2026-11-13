@@ -160,6 +160,7 @@ public struct Tree {
     List<Items> Lists;
     List<edit.Buffer> Bufs;
     List<Code> Codes;
+    List<u32> Spare;        // freed documents
     u32 Focus;
     u32 Hover;
     u32 Pressed;
@@ -186,7 +187,7 @@ public struct Tree {
     public static Tree New() {
         Tree t = new Tree {
             Nodes = List<Node>.New(), Labels = List<string>.New(), Lists = List<Items>.New(),
-            Bufs = List<edit.Buffer>.New(), Codes = List<Code>.New(), Focus = 0, Hover = 0,
+            Bufs = List<edit.Buffer>.New(), Codes = List<Code>.New(), Spare = List<u32>.New(), Focus = 0, Hover = 0,
             Pressed = 0, Drag = 0, Before = 0, Cells = false, RowH = 1, LineH = 1, Act = ACT_NONE,
             ActItem = 0, PtrX = 0, PtrY = 0, Clip = string.New(), SystemClip = false,
             MenuId = 0, MenuTitle = NO_ITEM, MenuHot = NO_ITEM, MenuX = 0, MenuY = 0, MenuW = 0, MenuH = 0, MenuPad = 0
@@ -662,6 +663,49 @@ public struct Tree {
 
     // The text of a text field or editor.
     public string Value(in this, u32 id) => this.Bufs.AsSlice()[this.N(id).Data as usize].Text();
+
+    // Documents: an editor shows one buffer at a time, and can be switched among many,
+    // each with its own text, cursor, history and highlighting. Editor(...) makes the
+    // first; NewDocument makes more, ShowDocument puts one in an editor, and
+    // FreeDocument empties one that is no longer needed (its number is used again).
+    public u32 NewDocument(ref this, str text) {
+        u32 at = 0;
+        if (this.Spare.Len() > 0) {
+            at = this.Spare.Pop().Unwrap();
+            this.Bufs.AsMutSlice()[at as usize] = edit.Buffer.New();
+            mut Code[] cs = this.Codes.AsMutSlice();
+            cs[at as usize].Keywords = string.New();
+            cs[at as usize].Comment = string.New();
+        } else {
+            at = this.NewCode(false);
+        }
+        this.Bufs.AsMutSlice()[at as usize].Load(text);
+        return at;
+    }
+
+    // The document editor id shows.
+    public u32 DocumentOf(in this, u32 id) => this.N(id).Data;
+
+    public void ShowDocument(ref this, u32 id, u32 doc) {
+        if (doc as usize >= this.Bufs.Len() || this.N(id).Data == doc) return;
+        mut Node[] ns = this.Nodes.AsMutSlice();
+        ns[id as usize].Data = doc;
+        ns[id as usize].ScrollX = 0;
+        ns[id as usize].ScrollY = 0;
+        ns[id as usize].Reveal = true;
+    }
+
+    public void FreeDocument(ref this, u32 doc) {
+        if (doc as usize >= this.Bufs.Len()) return;
+        this.Bufs.AsMutSlice()[doc as usize] = edit.Buffer.New();
+        this.Spare.Push(doc);
+    }
+
+    // A document's buffer (one element): the whole envoui.edit API.
+    public mut edit.Buffer[] Document(ref this, u32 doc) {
+        mut edit.Buffer[] all = this.Bufs.AsMutSlice();
+        return all[doc as usize..doc as usize + 1];
+    }
 
     // Replaces the text of a text field or editor (and forgets its history).
     public void SetValue(ref this, u32 id, str text) {
