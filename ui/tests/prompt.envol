@@ -1,0 +1,73 @@
+// A palette as a prompt: it starts with the given text, Enter answers with PROMPT_ITEM
+// and the typed text; Escape answers nothing. Opened again as a palette it has no title
+// and filters its items. Item icons stay with their items when one is removed.
+// expect: prompt open: true, text 12
+// expect: enter: answered 125, open false
+// expect: escape: no answer, open false
+// expect: palette: title empty true, rows 2
+// expect: icons after removing b: 3 5
+use envor.theme;
+use envoui as ui;
+use ports.{Event, EventKind, KEY_BACKSPACE, KEY_ENTER, KEY_ESCAPE};
+use alloc.text;
+
+ui.Tree t = ui.Tree.New();
+u32 ed = t.Editor(t.Root(), "text");
+t.SetGrow(ed, 1);
+u32 p = t.Palette(t.Root());
+theme.Theme th = theme.Dark();
+t.SetFocus(ed);
+
+t.OpenPrompt(p, "Go to Line", "12");
+t.LayoutCells(th, 80, 20);
+string a = string.From("prompt open: ");
+a.Append(Yes(t.Focused() == p));
+a.Append(", text ");
+a.Append(t.PaletteText(p).AsStr());
+print(a.AsStr());
+
+t.OnEvent(Event.Of(EventKind.Char, 0, 0, '5' as u32));
+u32 got = t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_ENTER));
+string b = string.From("enter: answered ");
+if (got == p && t.Action() == ui.ACT_OPEN && t.Item() == ui.PROMPT_ITEM) b.Append(t.PaletteText(p).AsStr());
+b.Append(", open ");
+b.Append(Yes(t.Focused() == p));
+print(b.AsStr());
+
+t.OpenPrompt(p, "Save As", "x");
+u32 none = t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_ESCAPE));
+string c = string.From("escape: ");
+if (none == p && t.Action() == ui.ACT_OPEN) c.Append("answered");
+else c.Append("no answer");
+c.Append(", open ");
+c.Append(Yes(t.Focused() == p));
+print(c.AsStr());
+
+t.AddItem(p, "alpha", 0);
+t.AddItem(p, "beta", 0);
+t.OpenPalette(p);
+t.LayoutCells(th, 80, 20);
+string d = string.From("palette: title empty ");
+d.Append(Yes(t.Label(p).Len == 0));
+d.Append(", rows ");
+d.Append(text.Uint(t.RowCount(p) as u64).AsStr());
+print(d.AsStr());
+
+u32 list = t.ListView(t.Root());
+t.AddItem(list, "a", 0);
+t.AddItem(list, "b", 0);
+t.AddItem(list, "c", 0);
+t.SetItemIcon(list, 0, ui.ICON_ENVOL);
+t.SetItemIcon(list, 1, ui.ICON_FOLDER);
+t.SetItemIcon(list, 2, ui.ICON_JSON);
+t.RemoveItem(list, 1);
+string e = string.From("icons after removing b: ");
+e.Append(text.Uint(t.ItemIcon(list, 0) as u64).AsStr());
+e.Append(" ");
+e.Append(text.Uint(t.ItemIcon(list, 1) as u64).AsStr());
+print(e.AsStr());
+
+str Yes(bool b) {
+    if (b) return "true";
+    return "false";
+}

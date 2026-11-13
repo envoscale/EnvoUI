@@ -83,6 +83,21 @@ const u8 PEND_ADD = 3;                  // another cursor where the pointer is
 // The rows a palette shows at most.
 const usize PALETTE_ROWS = 8;
 
+// Item() after a prompt's Enter (OpenPrompt).
+public const usize PROMPT_ITEM = 0xFFFFFFFFFFFFFFFE;
+
+// Icons for list and tree items (SetItemIcon).
+public const u32 ICON_NONE = 0;
+public const u32 ICON_FOLDER = 1;
+public const u32 ICON_FILE = 2;
+public const u32 ICON_ENVOL = 3;
+public const u32 ICON_MARKDOWN = 4;
+public const u32 ICON_JSON = 5;
+public const u32 ICON_IMAGE = 6;
+public const u32 ICON_BINARY = 7;
+public const u32 ICON_CODE = 8;
+public const u32 ICON_CONFIG = 9;
+
 struct Node {
     Kind K;
     u32 Parent;
@@ -124,6 +139,7 @@ struct Items {
     List<bool> Open;        // a tree item shows its children
     List<u32> Shown;        // the rows: items not inside a closed one, or matching the query
     List<i32> Ends;         // tabs: where each ends (laid out)
+    List<u32> Icons;        // per item: ICON_*
     usize Sel;              // the selected row
     bool Closable;          // tabs with a close mark
 }
@@ -204,7 +220,7 @@ public struct Tree {
         u32 at = this.Lists.Len() as u32;
         this.Lists.Push(new Items {
             Labels = List<string>.New(), Depth = List<u32>.New(), Open = List<bool>.New(),
-            Shown = List<u32>.New(), Ends = List<i32>.New(), Sel = 0, Closable = false
+            Shown = List<u32>.New(), Ends = List<i32>.New(), Icons = List<u32>.New(), Sel = 0, Closable = false
         });
         return at;
     }
@@ -376,6 +392,9 @@ public struct Tree {
         this.Labels.Set(id as usize, string.From(label));
     }
 
+    // A component's label (a palette's: its prompt title).
+    public str Label(in this, u32 id) => this.Labels.AsSlice()[id as usize].AsStr();
+
     public void SetChecked(ref this, u32 id, bool on) {
         this.Nodes.AsMutSlice()[id as usize].On = on;
     }
@@ -433,6 +452,7 @@ public struct Tree {
             ls[i].Labels.Push(string.From(label));
             ls[i].Depth.Push(depth);
             ls[i].Open.Push(false);
+            ls[i].Icons.Push(ICON_NONE);
         }
         this.Refresh(id);
         return at;
@@ -448,16 +468,19 @@ public struct Tree {
             List<string> labels = List<string>.New();
             List<u32> depth = List<u32>.New();
             List<bool> open = List<bool>.New();
+            List<u32> icons = List<u32>.New();
             usize n = ls[d].Labels.Len();
             for (usize k = 0; k < n; k++) {
                 if (k == i) continue;
                 labels.Push(string.From(ls[d].Labels.AsSlice()[k].AsStr()));
                 depth.Push(ls[d].Depth.Get(k));
                 open.Push(ls[d].Open.Get(k));
+                icons.Push(ls[d].Icons.Get(k));
             }
             ls[d].Labels = labels;
             ls[d].Depth = depth;
             ls[d].Open = open;
+            ls[d].Icons = icons;
         }
         usize sel = this.SelectedRow(id);
         this.Refresh(id);
@@ -471,6 +494,7 @@ public struct Tree {
             ls[d].Labels = List<string>.New();
             ls[d].Depth = List<u32>.New();
             ls[d].Open = List<bool>.New();
+            ls[d].Icons = List<u32>.New();
             ls[d].Sel = 0;
         }
         this.Refresh(id);
@@ -478,6 +502,20 @@ public struct Tree {
     }
 
     public usize ItemCount(in this, u32 id) => this.Lists.AsSlice()[this.N(id).Data as usize].Labels.Len();
+
+    // Item i's icon (ICON_*), drawn before its label in lists and trees.
+    public void SetItemIcon(ref this, u32 id, usize i, u32 icon) {
+        mut Items[] ls = this.Lists.AsMutSlice();
+        usize d = this.N(id).Data as usize;
+        if (i < ls[d].Icons.Len()) ls[d].Icons.Set(i, icon);
+    }
+
+    public u32 ItemIcon(in this, u32 id, usize i) {
+        Items[] ls = this.Lists.AsSlice();
+        usize d = this.N(id).Data as usize;
+        if (i < ls[d].Icons.Len()) return ls[d].Icons.Get(i);
+        return ICON_NONE;
+    }
     public str ItemText(in this, u32 id, usize i) => this.Lists.AsSlice()[this.N(id).Data as usize].Labels.AsSlice()[i].AsStr();
     public void SetItemText(ref this, u32 id, usize i, str label) {
         mut Items[] ls = this.Lists.AsMutSlice();
@@ -541,7 +579,7 @@ public struct Tree {
     }
 
     usize SelectedRow(in this, u32 id) => this.Lists.AsSlice()[this.N(id).Data as usize].Sel;
-    usize RowCount(in this, u32 id) => this.Lists.AsSlice()[this.N(id).Data as usize].Shown.Len();
+    public usize RowCount(in this, u32 id) => this.Lists.AsSlice()[this.N(id).Data as usize].Shown.Len();
     usize ItemAtRow(in this, u32 id, usize r) => this.Lists.AsSlice()[this.N(id).Data as usize].Shown.Get(r) as usize;
 
     // The selected row becomes r (kept in range) and comes into view.
@@ -650,12 +688,29 @@ public struct Tree {
     // ---------------------------------------------------------------- the palette
 
     // Shows a palette with an empty query and all its items, and gives it the focus.
+    // Opens palette id as a prompt for one line of text: title shows at its right, the
+    // text starts as text, and Enter gives ACT_OPEN with Item() PROMPT_ITEM (PaletteText
+    // has the answer). Its items are cleared.
+    public void OpenPrompt(ref this, u32 id, str title, str text) {
+        this.ClearItems(id);
+        this.OpenPalette(id);
+        this.Labels.Set(id as usize, string.From(title));
+        mut edit.Buffer[] bs = this.Bufs.AsMutSlice();
+        usize q = this.N(id).Data2 as usize;
+        bs[q].Load(text);
+        bs[q].SetCursor(edit.Pos.At(0, text.Len));
+    }
+
+    // What has been typed into palette id.
+    public string PaletteText(in this, u32 id) => this.Bufs.AsSlice()[this.N(id).Data2 as usize].Text();
+
     public void OpenPalette(ref this, u32 id) {
         {
             mut Node[] ns = this.Nodes.AsMutSlice();
             ns[id as usize].Hidden = false;
             ns[id as usize].ScrollY = 0;
         }
+        this.Labels.Set(id as usize, string.New());
         this.Bufs.AsMutSlice()[this.N(id).Data2 as usize].Load("");
         this.Refresh(id);
         if (this.Focus != id) this.Before = this.Focus;
@@ -1614,7 +1669,12 @@ public struct Tree {
             return this.Did(id, ACT_CANCEL, 0);
         }
         if (key == ports.KEY_ENTER) {
-            if (this.RowCount(id) == 0) return 0;
+            if (this.RowCount(id) == 0) {
+                // a prompt (no items): the text is the answer
+                if (this.ItemCount(id) != 0) return 0;
+                this.ClosePalette(id);
+                return this.Did(id, ACT_OPEN, PROMPT_ITEM);
+            }
             usize item = this.ItemAtRow(id, this.SelectedRow(id));
             this.ClosePalette(id);
             return this.Did(id, ACT_OPEN, item);
@@ -1919,6 +1979,13 @@ public struct Tree {
                 }
                 tx += 14;
             }
+            u32 icon = ICON_NONE;
+            if (item < ls[at].Icons.Len()) icon = ls[at].Icons.Get(item);
+            if (icon != ICON_NONE) {
+                i32 size = th.Body.Size as i32;
+                DrawIcon(ref c, f, icon, tx, ry + (rh - size) / 2, size);
+                tx += size + th.Xs as i32 + 2;
+            }
             DrawLabel(ref c, f, tx, ry, rh, ls[at].Labels.AsSlice()[item].AsStr(), th.Body.Size, ink);
         }
     }
@@ -2045,7 +2112,14 @@ public struct Tree {
         i32 field = th.ControlHeight as i32;
         c.FillRoundedRect(d.X + pad, d.Y + pad, d.W - 2 * pad, field, th.RadiusMedium as i32, Rgb(th.C.SurfaceRaised));
         i32 lh = this.LineH;
-        this.DrawTextPixels(ref c, f, th, id, d.Data2 as usize, d.X + pad + 8, d.Y + pad + (field - lh) / 2, d.X + d.W - pad - 8, 0);
+        i32 right = d.X + d.W - pad - 8;
+        str title = this.Labels.AsSlice()[id as usize].AsStr();
+        if (title.Len != 0) {
+            i32 tw = f.Measure(title, th.Body.Size);
+            DrawLabel(ref c, f, right - tw, d.Y + pad, field, title, th.Body.Size, th.C.TextSecondary);
+            right = right - tw - 12;
+        }
+        this.DrawTextPixels(ref c, f, th, id, d.Data2 as usize, d.X + pad + 8, d.Y + pad + (field - lh) / 2, right, 0);
         i32 top = d.Y + pad + field;
         this.DrawRowsPixels(ref c, f, th, id, d.X + pad, top, d.W - 2 * pad, d.H - pad - field - pad);
     }
