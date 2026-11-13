@@ -25,4 +25,7 @@ jobs:
           git clone -q https://github.com/envoscale/EnvoScale envoscale
           git -C envoscale -c advice.detachedHead=false checkout -q "$(cat envoscale.ref)"
           cd envoscale && ./build.sh build
-      - run: envoscale/build/envo/envo test
+      - run: |
+          e=envoscale/build/envo/envo
+          if [ -f "$e.exe" ]; then e="$e.exe"; fi
+          "$e" test
