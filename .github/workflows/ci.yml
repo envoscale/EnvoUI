@@ -27,5 +27,5 @@ jobs:
           cd envoscale && ./build.sh build
       - run: |
           e=envoscale/build/envo/envo
-          if [ -f "$e.exe" ]; then e="$e.exe"; fi
+          if [ "$RUNNER_OS" = Windows ]; then e="$e.exe"; fi
           "$e" test
