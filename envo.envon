@@ -1,0 +1,11 @@
+#eon 1
+// Envoui: the UI framework for Envol. Used through Envopm:
+//     envoui = { git = "https://github.com/envoscale/Envoui", rev = "<commit>" }
+package {
+    name    = "envoui"
+    version = "0.1.0"
+    edition = "2027"
+}
+dependencies {
+    envor = { git = "https://github.com/envoscale/Envor", rev = "596ea4c3fbd47bb2a3967780b9da33544a4e9dd5" }
+}
