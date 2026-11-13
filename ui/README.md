@@ -7,7 +7,7 @@ User interfaces as a retained tree of components (PLAN D47). A program builds th
 lays it out for a size, draws it, and hands it input; input comes back as the component
 that was activated, so the program decides what that means. One layout pass serves two
 renderers: pixels (`envor.gfx` and `envor.font`, shown in a window) and cells
-(`envoui.term`). Envor (`envor.theme`) is the theme.
+(`envoui.term`). EnvoR (`envor.theme`) is the theme.
 
 ## Simple door
 
@@ -50,9 +50,9 @@ with `DrawCells(ref screen, theme)` and handed keys with `OnKey`.
 
 ## Full-control door
 
-- Components: `Column`, `Row`, `Card`, `Text` (Envor styles `CAPTION` to
+- Components: `Column`, `Row`, `Card`, `Text` (EnvoR styles `CAPTION` to
   `LARGE_TITLE`), `Button` (primary or not), `Checkbox`, `Spacer`, `Divider`.
-- Layout: `SetGap` and `SetPadding` take Envor spacing steps (`XS` to `XXL`), rounded to
+- Layout: `SetGap` and `SetPadding` take EnvoR spacing steps (`XS` to `XXL`), rounded to
   cells in a terminal; `SetAlign` (`Start`, `Center`, `End`, `Stretch`); `SetGrow`
   shares out the space left over; `SetVisible` hides a component (it takes no space).
   Bounds: `X`, `Y`, `Width`, `Height`.

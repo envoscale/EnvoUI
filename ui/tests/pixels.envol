@@ -22,7 +22,7 @@ use envor.theme;
 use ports.{Event, EventKind};
 use alloc.text;
 
-// "Envol Test", a font of six glyphs drawn for these tests (tests/data/mkfont.py makes
+// "EnvoL Test", a font of six glyphs drawn for these tests (tests/data/mkfont.py makes
 // it): .notdef, space, 'l' (a bar), 'O' (a ring of quadratic curves), 'A' (a triangle
 // with a hole), 'i' (a composite of two bars).
 u8 Nib(u8 c) {

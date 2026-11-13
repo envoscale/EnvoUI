@@ -1,4 +1,4 @@
-# Tests the package with EnvoScale at the commit in envoscale.ref, on Linux and Windows.
+# Tests the package with EnvoScale at the commit in envolang.ref, on Linux and Windows.
 name: ci
 
 on:
@@ -22,10 +22,10 @@ jobs:
         with:
           persist-credentials: false
       - run: |
-          git clone -q https://github.com/envoscale/EnvoScale envoscale
-          git -C envoscale -c advice.detachedHead=false checkout -q "$(cat envoscale.ref)"
-          cd envoscale && ./build.sh build
+          git clone -q https://github.com/envoscale/EnvoLang envolang
+          git -C envolang -c advice.detachedHead=false checkout -q "$(cat envolang.ref)"
+          cd envolang && ./build.sh build
       - run: |
-          e=envoscale/build/envo/envo
+          e=envolang/build/envo/envo
           if [ "$RUNNER_OS" = Windows ]; then e="$e.exe"; fi
           "$e" test

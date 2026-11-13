@@ -2,7 +2,7 @@
 // the tree, lays it out for a size, draws it, and hands it input; input comes back as the
 // component that was activated, with Action() saying what happened, so the program
 // decides what that means. One layout pass serves both renderers: pixels (envor.gfx with
-// envor.font, in a window) and cells (envoui.term). Envor (envor.theme) is the theme.
+// envor.font, in a window) and cells (envoui.term). EnvoR (envor.theme) is the theme.
 //
 // The components for applications (M14.6): a scroll view, lists and trees of items (only
 // the rows in view are drawn), tabs, split panes, a text field and a code editor (both on
@@ -47,14 +47,14 @@ public enum Align {
     Stretch,
 }
 
-// Text styles (Envor's type scale).
+// Text styles (EnvoR's type scale).
 public const u8 CAPTION = 0;
 public const u8 BODY = 1;
 public const u8 HEADLINE = 2;
 public const u8 TITLE = 3;
 public const u8 LARGE_TITLE = 4;
 
-// Spacing steps (Envor's 4-pixel scale): what Gap and Padding take.
+// Spacing steps (EnvoR's 4-pixel scale): what Gap and Padding take.
 public const u8 NONE = 0;
 public const u8 XS = 1;
 public const u8 S = 2;
