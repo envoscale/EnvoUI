@@ -107,14 +107,25 @@ public struct Buffer {
     }
 
     // Replaces everything with t and forgets the history.
-    public void Load(ref this, str t) {
+    // (Bytes that are not valid UTF-8 become U+FFFD, so every position stays on a
+    // character boundary.)
+    public void Load(ref this, str given) {
+        string fixed = string.New();
+        str t = given;
+        if (ct.Utf8ValidUpTo(given) != given.Len) {
+            fixed = Repaired(given);
+            t = fixed.AsStr();
+        }
         this.Lines = List<string>.New();
-        this.Crlf = ct.Contains(t, "\r\n");
+        this.Crlf = false;
         usize start = 0;
         for (usize i = 0; i <= t.Len; i++) {
             if (i == t.Len || t[i] == 10) {
                 usize end = i;
-                if (end > start && t[end - 1] == 13) end--;
+                if (end > start && t[end - 1] == 13) {
+                    end--;
+                    this.Crlf = true;
+                }
                 this.Lines.Push(string.From(t[start..end]));
                 start = i + 1;
             }
@@ -297,26 +308,26 @@ public struct Buffer {
         string cur = string.From(this.Line(a.Line)[0..a.Col]);
         str lastLine = this.Line(b.Line);
         string tail = string.From(lastLine[b.Col..lastLine.Len]);
-        // the lines after b, taken off the end (so in reverse)
-        List<string> after = List<string>.New();
-        while (this.Lines.Len() > b.Line + 1) after.Push(this.Lines.Pop().Unwrap());
-        // lines a to b go
-        while (this.Lines.Len() > a.Line) {
-            string gone = this.Lines.Pop().Unwrap();
-        }
-        // the new ones: the head, t's lines, the tail
+        // the new lines: the head, t's lines, the tail
+        List<string> made = List<string>.New();
         for (usize i = 0; i < t.Len; i++) {
             if (t[i] == 10) {
-                this.Lines.Push(cur);
+                made.Push(cur);
                 cur = string.New();
             } else if (t[i] != 13) {
                 cur.AppendByte(t[i]);
             }
         }
-        Pos end = Pos.At(this.Lines.Len(), cur.Len());
+        Pos end = Pos.At(a.Line + made.Len(), cur.Len());
         cur.Append(tail.AsStr());
-        this.Lines.Push(cur);
-        while (after.Len() > 0) this.Lines.Push(after.Pop().Unwrap());
+        made.Push(cur);
+        // lines a to b become them: in place when the count stays, else one splice, so an
+        // edit costs the lines it touches, not the lines after it
+        if (made.Len() == 1 && a.Line == b.Line) {
+            this.Lines.Set(a.Line, made.Pop().Unwrap());
+        } else {
+            SpliceLines(ref this.Lines, a.Line, b.Line + 1 - a.Line, ref made);
+        }
         this.Version++;
         return end;
     }
@@ -801,4 +812,62 @@ bool Follows(in Splice last, in Splice next) {
     if (last.Removed.Len() > 0 || next.Removed.Len() > 0) return false;
     Pos end = EndOf(last.From, last.Inserted.AsStr());
     return end.Same(next.From);
+}
+
+// s with every byte that is not part of valid UTF-8 replaced by U+FFFD.
+public string Repaired(str s) {
+    string out2 = string.New();
+    out2.Reserve(s.Len + 16);
+    usize i = 0;
+    while (i < s.Len) {
+        // raw views: a slice of s would check character boundaries, which s has not got
+        usize ok = 0;
+        unsafe {
+            str rest = str_from(&s.Ptr[i], s.Len - i);
+            ok = ct.Utf8ValidUpTo(rest);
+            if (ok > 0) out2.Append(str_from(rest.Ptr, ok));
+        }
+        if (ok > 0) {
+            i += ok;
+            continue;
+        }
+        out2.Append("\u{FFFD}");
+        i++;
+        while (i < s.Len && s[i] & 0xC0 == 0x80) i++;
+    }
+    return out2;
+}
+
+// Replaces the remove lines of l at at with the lines of add (which ends empty): the
+// lines after them move once, as a block.
+void SpliceLines(ref List<string> l, usize at, usize remove, ref List<string> add) {
+    usize n = l.Len();
+    usize k = add.Len();
+    // the removed lines are dropped
+    for (usize i = 0; i < remove; i++) l.Set(at + i, string.New());
+    if (k > remove) {
+        for (usize i = 0; i < k - remove; i++) l.Push(string.New());
+    }
+    unsafe {
+        *string d = l.Data;
+        // the lines after the removed ones move to their new place (the slots they leave
+        // and the ones they cover hold empty strings, which own nothing)
+        usize from = at + remove;
+        usize to = at + k;
+        usize count = n - from;
+        if (to > from) {
+            usize i = count;
+            while (i > 0) {
+                i--;
+                d[to + i] = d[from + i];
+            }
+        } else if (to < from) {
+            for (usize i = 0; i < count; i++) d[to + i] = d[from + i];
+        }
+        // the new lines go in, taken out of add without being dropped there
+        *string s = add.Data;
+        for (usize i = 0; i < k; i++) d[at + i] = s[i];
+        add.Count = 0;
+        if (k < remove) l.Count = n - (remove - k);
+    }
 }

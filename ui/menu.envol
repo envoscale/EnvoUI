@@ -1,0 +1,455 @@
+// envoui: the menu bar. Titles (AddMenu) with their entries (AddMenuItem) below each.
+// Clicking a title opens its menu and moving across titles switches menus; releasing on
+// an entry chooses it (ACT_OPEN, Item() is the entry's index). F10, or Alt with a title's
+// first letter, opens a menu from the keyboard; the arrows move, Enter chooses, Escape
+// closes. While a menu is open it takes every key and click: a click outside closes it
+// and goes nowhere else.
+namespace envoui;
+
+use envor.gfx;
+use envor.font;
+use envoui.term;
+use envor.theme;
+use core.text as ct;
+
+const usize NO_ITEM = 0xFFFFFFFFFFFFFFFF;
+
+impl Tree {
+    // A menu bar across its container.
+    public u32 MenuBar(ref this, u32 parent) {
+        u32 id = this.Make(Kind.MenuBar, parent, "");
+        u32 items = this.NewItems();
+        this.Nodes.AsMutSlice()[id as usize].Data = items;
+        return id;
+    }
+
+    // A menu titled title; its entries are the AddMenuItem calls that follow.
+    public usize AddMenu(ref this, u32 bar, str title) => this.AddItem(bar, title, 0);
+
+    // An entry in the last menu added: label, and the shortcut shown at its right (""
+    // for none). A label of "-" is a separator line.
+    public usize AddMenuItem(ref this, u32 bar, str label, str shortcut) {
+        string s = string.From(label);
+        if (shortcut.Len > 0) {
+            s.AppendByte(9);
+            s.Append(shortcut);
+        }
+        return this.AddItem(bar, s.AsStr(), 1);
+    }
+
+    // Is a menu open?
+    public bool MenuOpen(in this) => this.MenuId != 0;
+
+    // The open menu's title item, and its highlighted entry (an item past the end when
+    // none is).
+    public usize MenuTitleItem(in this) => this.MenuTitle;
+    public usize MenuHotItem(in this) => this.MenuHot;
+
+    public void CloseMenu(ref this) {
+        this.MenuId = 0;
+        this.MenuTitle = NO_ITEM;
+        this.MenuHot = NO_ITEM;
+    }
+
+    void OpenMenu(ref this, u32 bar, usize title) {
+        this.MenuId = bar;
+        this.MenuTitle = title;
+        this.MenuHot = NO_ITEM;
+    }
+
+    // ---------------------------------------------------------------- reading the items
+
+    u32 FindMenuBar(in this) {
+        u32 n = this.Nodes.Len() as u32;
+        for (u32 id = 2; id < n; id++) {
+            Node d = this.N(id);
+            if (d.K == Kind.MenuBar && !d.Hidden) return id;
+        }
+        return 0;
+    }
+
+    Items[] MenuItems(in this, u32 bar) => this.Lists.AsSlice()[(this.N(bar).Data as usize)..(this.N(bar).Data as usize + 1)];
+
+    usize ItemCountOf(in this, u32 bar) => this.MenuItems(bar)[0].Labels.Len();
+    u32 DepthOf(in this, u32 bar, usize i) => this.MenuItems(bar)[0].Depth.Get(i);
+    str TextOf(in this, u32 bar, usize i) => this.MenuItems(bar)[0].Labels.AsSlice()[i].AsStr();
+
+    // The title item before title t (wrapping), or after it.
+    usize NextTitle(in this, u32 bar, usize t, bool forward) {
+        usize n = this.ItemCountOf(bar);
+        usize i = t;
+        for (usize k = 0; k < n; k++) {
+            if (forward) {
+                i = i + 1;
+                if (i >= n) i = 0;
+            } else {
+                if (i == 0) i = n;
+                i = i - 1;
+            }
+            if (this.DepthOf(bar, i) == 0) return i;
+        }
+        return t;
+    }
+
+    // The next choosable entry of the open menu after (or before) entry e; NO_ITEM to start.
+    usize NextEntry(in this, usize e, bool forward) {
+        u32 bar = this.MenuId;
+        usize first = this.MenuTitle + 1;
+        usize end = first;
+        usize n = this.ItemCountOf(bar);
+        while (end < n && this.DepthOf(bar, end) == 1) end++;
+        if (end == first) return NO_ITEM;
+        usize count = end - first;
+        usize at = 0;
+        if (e != NO_ITEM && e >= first && e < end) at = e - first;
+        else if (forward) at = count - 1;
+        else at = 0;
+        for (usize k = 0; k < count; k++) {
+            if (forward) at = (at + 1) % count;
+            else at = (at + count - 1) % count;
+            if (!IsSeparator(this.TextOf(bar, first + at))) return first + at;
+        }
+        return NO_ITEM;
+    }
+
+    // The title item under (x, y) on the bar, or NO_ITEM.
+    usize TitleAt(in this, u32 bar, i32 x, i32 y) {
+        Node d = this.N(bar);
+        if (y < d.Y || y >= d.Y + d.H || x < d.X) return NO_ITEM;
+        Items[] it = this.MenuItems(bar);
+        i32 start = d.X;
+        usize k = 0;
+        for (usize i = 0; i < it[0].Labels.Len(); i++) {
+            if (it[0].Depth.Get(i) != 0) continue;
+            if (k >= it[0].Ends.Len()) return NO_ITEM;
+            i32 end = d.X + it[0].Ends.Get(k);
+            if (x >= start && x < end) return i;
+            start = end;
+            k++;
+        }
+        return NO_ITEM;
+    }
+
+    // Where title item t starts and ends on the bar.
+    void TitleSpan(in this, u32 bar, usize t, ref i32 x0, ref i32 x1) {
+        Node d = this.N(bar);
+        Items[] it = this.MenuItems(bar);
+        i32 start = d.X;
+        usize k = 0;
+        for (usize i = 0; i < it[0].Labels.Len() && k < it[0].Ends.Len(); i++) {
+            if (it[0].Depth.Get(i) != 0) continue;
+            i32 end = d.X + it[0].Ends.Get(k);
+            if (i == t) {
+                x0 = start;
+                x1 = end;
+                return;
+            }
+            start = end;
+            k++;
+        }
+        x0 = d.X;
+        x1 = d.X;
+    }
+
+    // The height of entry e's row in the open menu.
+    i32 EntryHeight(in this, str label) {
+        if (!IsSeparator(label)) return this.RowH;
+        if (this.Cells) return 1;
+        return 9;
+    }
+
+    // The choosable entry of the open menu at (x, y), or NO_ITEM.
+    usize EntryAtPoint(in this, i32 x, i32 y) {
+        if (this.MenuId == 0 || x < this.MenuX || x >= this.MenuX + this.MenuW) return NO_ITEM;
+        u32 bar = this.MenuId;
+        i32 at = this.MenuY + this.MenuPad;
+        usize n = this.ItemCountOf(bar);
+        for (usize i = this.MenuTitle + 1; i < n && this.DepthOf(bar, i) == 1; i++) {
+            str label = this.TextOf(bar, i);
+            i32 h = this.EntryHeight(label);
+            if (y >= at && y < at + h) {
+                if (IsSeparator(label)) return NO_ITEM;
+                return i;
+            }
+            at += h;
+        }
+        return NO_ITEM;
+    }
+
+    bool InMenu(in this, i32 x, i32 y) => this.MenuId != 0 && x >= this.MenuX && x < this.MenuX + this.MenuW && y >= this.MenuY && y < this.MenuY + this.MenuH;
+
+    // ---------------------------------------------------------------- layout
+
+    // The widest entry of the open menu in pixels: its label, a gap and its shortcut.
+    i32 MenuWidestPixels(in this, in font.Font f, in theme.Theme th) {
+        i32 widest = 0;
+        u32 bar = this.MenuId;
+        usize n = this.ItemCountOf(bar);
+        for (usize i = this.MenuTitle + 1; i < n && this.DepthOf(bar, i) == 1; i++) {
+            str label = this.TextOf(bar, i);
+            if (IsSeparator(label)) continue;
+            i32 w = f.Measure(LabelPart(label), th.Body.Size) + 3 * th.L as i32 + f.Measure(KeyPart(label), th.Body.Size);
+            if (w > widest) widest = w;
+        }
+        return widest;
+    }
+
+    // The same in cells.
+    i32 MenuWidestCells(in this) {
+        i32 widest = 0;
+        u32 bar = this.MenuId;
+        usize n = this.ItemCountOf(bar);
+        for (usize i = this.MenuTitle + 1; i < n && this.DepthOf(bar, i) == 1; i++) {
+            str label = this.TextOf(bar, i);
+            if (IsSeparator(label)) continue;
+            i32 w = Chars(LabelPart(label)) + 3 + Chars(KeyPart(label));
+            if (w > widest) widest = w;
+        }
+        return widest;
+    }
+
+    // Where the open menu goes: under its title, as wide as its widest entry (widest), kept
+    // on the screen.
+    void PlaceMenu(ref this, in theme.Theme th, i32 width, bool cells, i32 widest) {
+        if (this.MenuId == 0) return;
+        u32 bar = this.MenuId;
+        if (this.MenuTitle >= this.ItemCountOf(bar)) {
+            this.CloseMenu();
+            return;
+        }
+        i32 x0 = 0;
+        i32 x1 = 0;
+        this.TitleSpan(bar, this.MenuTitle, ref x0, ref x1);
+        i32 pad = th.Xs as i32;
+        i32 side = th.M as i32;
+        i32 least = 180;
+        if (cells) {
+            pad = 1;
+            side = 1;
+            least = 16;
+        }
+        i32 h = 2 * pad;
+        usize n = this.ItemCountOf(bar);
+        for (usize i = this.MenuTitle + 1; i < n && this.DepthOf(bar, i) == 1; i++) h += this.EntryHeight(this.TextOf(bar, i));
+        i32 w = widest + 2 * side;
+        if (w < least) w = least;
+        i32 x = x0;
+        if (x + w > width) x = width - w;
+        if (x < 0) x = 0;
+        this.MenuX = x;
+        this.MenuY = this.N(bar).Y + this.N(bar).H;
+        this.MenuW = w;
+        this.MenuH = h;
+        this.MenuPad = pad;
+    }
+
+    // ---------------------------------------------------------------- input
+
+    bool MenuPointerDown(ref this, i32 x, i32 y, ref u32 got) {
+        u32 bar = this.FindMenuBar();
+        if (bar == 0) return false;
+        usize title = this.TitleAt(bar, x, y);
+        got = 0;
+        if (this.MenuId != 0) {
+            if (this.InMenu(x, y)) return true;     // chosen on release
+            if (title != NO_ITEM && title == this.MenuTitle) {
+                this.CloseMenu();
+                return true;
+            }
+            if (title != NO_ITEM) {
+                this.OpenMenu(bar, title);
+                got = bar;
+                return true;
+            }
+            this.CloseMenu();
+            return true;
+        }
+        if (title == NO_ITEM) return false;
+        this.OpenMenu(bar, title);
+        got = bar;
+        return true;
+    }
+
+    bool MenuPointerMove(ref this, i32 x, i32 y) {
+        if (this.MenuId == 0) return false;
+        usize title = this.TitleAt(this.MenuId, x, y);
+        if (title != NO_ITEM && title != this.MenuTitle) this.OpenMenu(this.MenuId, title);
+        usize e = this.EntryAtPoint(x, y);
+        if (e != NO_ITEM || !this.InMenu(x, y)) this.MenuHot = e;
+        return true;
+    }
+
+    bool MenuPointerUp(ref this, i32 x, i32 y, ref u32 got) {
+        got = 0;
+        if (this.MenuId == 0) return false;
+        usize e = this.EntryAtPoint(x, y);
+        if (e == NO_ITEM) return true;
+        got = this.ChooseEntry(e);
+        return true;
+    }
+
+    u32 ChooseEntry(ref this, usize e) {
+        u32 bar = this.MenuId;
+        this.CloseMenu();
+        return this.Did(bar, ACT_OPEN, e);
+    }
+
+    bool MenuKey(ref this, u32 key, u32 mods, u32 ch, ref u32 got) {
+        got = 0;
+        u32 bar = this.FindMenuBar();
+        if (bar == 0) return false;
+        if (this.MenuId == 0) {
+            usize n = this.ItemCountOf(bar);
+            if (key == ports.KEY_F1 + 9 && n > 0) {
+                this.OpenMenu(bar, 0);
+                this.MenuHot = this.NextEntry(NO_ITEM, true);
+                got = bar;
+                return true;
+            }
+            if (mods & ports.MOD_ALT != 0 && key >= ports.KEY_A && key < ports.KEY_A + 26) {
+                u8 letter = ('a' as u32 + key - ports.KEY_A) as u8;
+                for (usize i = 0; i < n; i++) {
+                    str t = this.TextOf(bar, i);
+                    if (this.DepthOf(bar, i) == 0 && t.Len > 0 && LowerAscii(t[0]) == letter) {
+                        this.OpenMenu(bar, i);
+                        this.MenuHot = this.NextEntry(NO_ITEM, true);
+                        got = bar;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        if (key == ports.KEY_ESCAPE) {
+            this.CloseMenu();
+        } else if (key == ports.KEY_DOWN) {
+            this.MenuHot = this.NextEntry(this.MenuHot, true);
+        } else if (key == ports.KEY_UP) {
+            this.MenuHot = this.NextEntry(this.MenuHot, false);
+        } else if (key == ports.KEY_RIGHT || key == ports.KEY_LEFT) {
+            this.OpenMenu(bar, this.NextTitle(bar, this.MenuTitle, key == ports.KEY_RIGHT));
+            this.MenuHot = this.NextEntry(NO_ITEM, true);
+        } else if (key == ports.KEY_ENTER || key == ports.KEY_SPACE) {
+            if (this.MenuHot != NO_ITEM) got = this.ChooseEntry(this.MenuHot);
+        }
+        return true;
+    }
+
+    // ---------------------------------------------------------------- drawing
+
+    void DrawMenuBarPixels(in this, ref gfx.Canvas c, in font.Font f, in theme.Theme th, u32 id) {
+        Node d = this.N(id);
+        c.FillRect(d.X, d.Y, d.W, d.H, Mix(th.C.SurfaceRaised, th.C.Surface, 112));
+        c.FillRect(d.X, d.Y + d.H - 1, d.W, 1, Rgb(th.C.Separator));
+        Items[] it = this.MenuItems(id);
+        for (usize i = 0; i < it[0].Labels.Len(); i++) {
+            if (it[0].Depth.Get(i) != 0) continue;
+            i32 x0 = 0;
+            i32 x1 = 0;
+            this.TitleSpan(id, i, ref x0, ref x1);
+            if (this.MenuId == id && this.MenuTitle == i) {
+                c.FillRoundedRect(x0 + 2, d.Y + 3, x1 - x0 - 4, d.H - 6, th.RadiusSmall as i32, Rgb(th.C.SurfacePressed));
+            }
+            DrawLabel(ref c, f, x0 + th.M as i32, d.Y, d.H, it[0].Labels.AsSlice()[i].AsStr(), th.Body.Size, th.C.Text);
+        }
+    }
+
+    void DrawMenuPixels(in this, ref gfx.Canvas c, in font.Font f, in theme.Theme th) {
+        if (this.MenuId == 0) return;
+        u32 bar = this.MenuId;
+        i32 r = th.RadiusMedium as i32;
+        c.FillRoundedRect(this.MenuX - 1, this.MenuY - 1, this.MenuW + 2, this.MenuH + 2, r + 1, Rgb(th.C.ControlEdge));
+        c.FillRoundedRect(this.MenuX, this.MenuY, this.MenuW, this.MenuH, r, Rgb(th.C.Surface));
+        i32 y = this.MenuY + this.MenuPad;
+        i32 side = th.M as i32;
+        usize n = this.ItemCountOf(bar);
+        for (usize i = this.MenuTitle + 1; i < n && this.DepthOf(bar, i) == 1; i++) {
+            str label = this.TextOf(bar, i);
+            i32 h = this.EntryHeight(label);
+            if (IsSeparator(label)) {
+                c.FillRect(this.MenuX + side, y + h / 2, this.MenuW - 2 * side, 1, Rgb(th.C.Separator));
+                y += h;
+                continue;
+            }
+            u32 ink = th.C.Text;
+            u32 keyInk = th.C.TextSecondary;
+            if (i == this.MenuHot) {
+                c.FillRoundedRect(this.MenuX + th.Xs as i32, y, this.MenuW - 2 * th.Xs as i32, h, th.RadiusSmall as i32, Rgb(th.C.Accent));
+                ink = th.C.OnAccent;
+                keyInk = th.C.OnAccent;
+            }
+            DrawLabel(ref c, f, this.MenuX + side, y, h, LabelPart(label), th.Body.Size, ink);
+            str k = KeyPart(label);
+            if (k.Len > 0) {
+                i32 kw = f.Measure(k, th.Body.Size);
+                DrawLabel(ref c, f, this.MenuX + this.MenuW - side - kw, y, h, k, th.Body.Size, keyInk);
+            }
+            y += h;
+        }
+    }
+
+    void DrawMenuBarCells(in this, ref term.Screen s, in theme.Theme th, u32 id) {
+        Node d = this.N(id);
+        u32 bg = MixRgb(th.C.SurfaceRaised, th.C.Surface, 112);
+        FillCells(ref s, d.X, d.Y, d.W, d.H, term.Style.Plain().Fg(th.C.Text).Bg(bg));
+        Items[] it = this.MenuItems(id);
+        for (usize i = 0; i < it[0].Labels.Len(); i++) {
+            if (it[0].Depth.Get(i) != 0) continue;
+            i32 x0 = 0;
+            i32 x1 = 0;
+            this.TitleSpan(id, i, ref x0, ref x1);
+            term.Style st = term.Style.Plain().Fg(th.C.Text).Bg(bg);
+            if (this.MenuId == id && this.MenuTitle == i) st = st.Bg(th.C.SurfacePressed);
+            FillCells(ref s, x0, d.Y, x1 - x0, 1, st);
+            PutCells(ref s, x0 + 1, d.Y, it[0].Labels.AsSlice()[i].AsStr(), st);
+        }
+    }
+
+    void DrawMenuCells(in this, ref term.Screen s, in theme.Theme th) {
+        if (this.MenuId == 0) return;
+        u32 bar = this.MenuId;
+        term.Style surface = term.Style.Plain().Fg(th.C.Text).Bg(th.C.Surface);
+        FillCells(ref s, this.MenuX, this.MenuY, this.MenuW, this.MenuH, surface);
+        if (this.MenuX >= 0 && this.MenuY >= 0) s.Box(this.MenuX as u32, this.MenuY as u32, this.MenuW as u32, this.MenuH as u32, term.Style.Plain().Fg(th.C.ControlEdge).Bg(th.C.Surface));
+        i32 y = this.MenuY + 1;
+        usize n = this.ItemCountOf(bar);
+        for (usize i = this.MenuTitle + 1; i < n && this.DepthOf(bar, i) == 1; i++) {
+            str label = this.TextOf(bar, i);
+            if (IsSeparator(label)) {
+                for (i32 x = this.MenuX + 1; x < this.MenuX + this.MenuW - 1; x++) SetCell(ref s, x, y, 0x2500, term.Style.Plain().Fg(th.C.Separator).Bg(th.C.Surface));
+                y++;
+                continue;
+            }
+            term.Style st = surface;
+            if (i == this.MenuHot) st = term.Style.Plain().Fg(th.C.OnAccent).Bg(th.C.Accent);
+            FillCells(ref s, this.MenuX + 1, y, this.MenuW - 2, 1, st);
+            PutCells(ref s, this.MenuX + 1, y, LabelPart(label), st);
+            str k = KeyPart(label);
+            if (k.Len > 0) PutCells(ref s, this.MenuX + this.MenuW - 1 - Chars(k), y, k, st);
+            y++;
+        }
+    }
+}
+
+bool IsSeparator(str label) => label.Len == 1 && label[0] == '-';
+
+// An entry's label, before the tab that separates it from its shortcut.
+str LabelPart(str s) {
+    for (usize i = 0; i < s.Len; i++) {
+        if (s[i] == 9) return s[0..i];
+    }
+    return s;
+}
+
+// An entry's shortcut, after the tab, or "".
+str KeyPart(str s) {
+    for (usize i = 0; i < s.Len; i++) {
+        if (s[i] == 9) return s[i + 1..s.Len];
+    }
+    return "";
+}
+
+u8 LowerAscii(u8 c) {
+    if (c >= 'A' && c <= 'Z') return c + 32;
+    return c;
+}

@@ -1,0 +1,103 @@
+// Edits that add and remove whole lines, at the start, middle and end of a buffer, and
+// undoing them; and text that is not valid UTF-8, which loads with U+FFFD in place of
+// the bad bytes and can be edited around without a panic.
+// expect: newline mid: a|b1|1b2|c
+// expect: join: a|b1b2|c
+// expect: paste 3 lines at start: x|y|z a|b1b2|c
+// expect: delete across lines: x|yb2|c
+// expect: at end: x|yb2|c|end
+// expect: undo all: a|b1b2|c
+// expect: big: 100000 lines, line 50000 is 50000
+// expect: big edited: 100003 lines, line 50001 is new, line 50003 is 50000
+// expect: repaired: 3 lines, line 1 has 2
+// expect: edited around bad bytes: ok�
+use envoui.edit;
+use alloc.text;
+
+edit.Buffer b = edit.Buffer.New();
+b.Load("a\nb1b2\nc");
+b.SetCursor(edit.Pos.At(1, 2));
+b.Newline();
+b.Insert("1");
+print(Say("newline mid", b).AsStr());
+b.SetCursor(edit.Pos.At(2, 0));
+b.Backspace();
+b.Backspace();
+print(Say("join", b).AsStr());
+b.SetCursor(edit.Pos.At(0, 0));
+b.Paste("x\ny\nz ");
+print(Say("paste 3 lines at start", b).AsStr());
+b.SetCursor(edit.Pos.At(1, 1));
+for (usize i = 0; i < 7; i++) b.Delete();
+print(Say("delete across lines", b).AsStr());
+b.SetCursor(edit.Pos.At(2, 1));
+b.Newline();
+b.Insert("end");
+print(Say("at end", b).AsStr());
+while (b.Undo()) {}
+print(Say("undo all", b).AsStr());
+
+// a large buffer: an edit in the middle keeps every other line where it belongs
+string big = string.New();
+for (u64 i = 0; i < 100000; i++) {
+    big.Append(text.Uint(i).AsStr());
+    if (i + 1 < 100000) big.AppendByte(10);
+}
+edit.Buffer g = edit.Buffer.New();
+g.Load(big.AsStr());
+print(Line3("big: ", g.LineCount(), " lines, line 50000 is ", g.Line(50000)).AsStr());
+g.SetCursor(edit.Pos.At(50000, 0));
+g.Paste("\nnew\n\n");
+print(Line5("big edited: ", g.LineCount(), " lines, line 50001 is ", g.Line(50001), ", line 50003 is ", g.Line(50003)).AsStr());
+
+// bytes that are not UTF-8
+edit.Buffer r = edit.Buffer.New();
+string bad = string.From("ok");
+bad.AppendByte(10);
+bad.AppendByte(0xFF);
+bad.AppendByte(0x80);
+bad.AppendByte(0xC3);
+bad.AppendByte(10);
+bad.Append("end");
+unsafe { r.Load(str_from(bad.AsStr().Ptr, bad.Len())); }
+usize fffd = 0;
+str l1 = r.Line(1);
+for (usize i = 0; i + 2 < l1.Len; i++) {
+    if (l1[i] == 0xEF && l1[i + 1] == 0xBF && l1[i + 2] == 0xBD) fffd++;
+}
+print(Line3("repaired: ", r.LineCount(), " lines, line 1 has ", text.Uint(fffd as u64).AsStr()).AsStr());
+r.SetCursor(edit.Pos.At(1, 3));
+r.Insert("x");
+r.SetCursor(edit.Pos.At(1, 0));
+r.Delete();
+r.Delete();
+r.SetCursor(edit.Pos.At(0, 2));
+r.Delete();
+string joined = string.From("edited around bad bytes: ");
+joined.Append(r.Line(0));
+print(joined.AsStr());
+
+string Say(str what, in edit.Buffer b) {
+    string s = string.From(what);
+    s.Append(": ");
+    for (usize i = 0; i < b.LineCount(); i++) {
+        if (i > 0) s.AppendByte('|');
+        s.Append(b.Line(i));
+    }
+    return s;
+}
+
+string Line3(str a, usize n, str b, str c) {
+    string s = string.From(a);
+    s.Append(text.Uint(n as u64).AsStr());
+    s.Append(b);
+    s.Append(c);
+    return s;
+}
+
+string Line5(str a, usize n, str b, str c, str d, str e) {
+    string s = Line3(a, n, b, c);
+    s.Append(d);
+    s.Append(e);
+    return s;
+}

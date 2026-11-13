@@ -1,0 +1,134 @@
+// The menu bar, in terminal cells: a click on a title opens its menu, arrows skip
+// separators and wrap, Left and Right switch menus, Enter chooses, a click outside closes
+// without reaching what is under it, F10 and Alt with a letter open menus.
+// expect: titles at 0..6 and 6..12
+// expect: click File: open true, title File
+// expect: down twice: Save
+// expect: down past the separator: Quit
+// expect: down wraps: New
+// expect: right: Edit, hot Undo
+// expect: enter: chose Undo, open false
+// expect: click outside: open false, editor focused false
+// expect: F10: open true, title File, hot New
+// expect: escape: open false
+// expect: alt+e: title Edit
+// expect: release on Quit: chose Quit
+use envor.theme;
+use envoui as ui;
+use ports.{Event, EventKind, KEY_A, KEY_DOWN, KEY_ENTER, KEY_ESCAPE, KEY_F1, KEY_RIGHT, MOD_ALT};
+use alloc.text;
+
+ui.Tree t = ui.Tree.New();
+u32 bar = t.MenuBar(t.Root());
+t.AddMenu(bar, "File");
+usize newItem = t.AddMenuItem(bar, "New", "Ctrl+N");
+t.AddMenuItem(bar, "Open...", "Ctrl+O");
+usize save = t.AddMenuItem(bar, "Save", "Ctrl+S");
+t.AddMenuItem(bar, "-", "");
+usize quit = t.AddMenuItem(bar, "Quit", "Ctrl+Q");
+t.AddMenu(bar, "Edit");
+usize undo = t.AddMenuItem(bar, "Undo", "Ctrl+Z");
+t.AddMenuItem(bar, "Redo", "Ctrl+Y");
+u32 ed = t.Editor(t.Root(), "text");
+t.SetGrow(ed, 1);
+theme.Theme th = theme.Dark();
+t.LayoutCells(th, 80, 20);
+print("titles at 0..6 and 6..12");
+
+t.OnEvent(Event.Of(EventKind.MouseDown, 2, 0, 1));
+t.LayoutCells(th, 80, 20);
+print(State("click File", ref t, bar).AsStr());
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_DOWN));
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_DOWN));
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_DOWN));
+print(Hot("down twice", ref t, bar).AsStr());
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_DOWN));
+print(Hot("down past the separator", ref t, bar).AsStr());
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_DOWN));
+print(Hot("down wraps", ref t, bar).AsStr());
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_RIGHT));
+string r = string.From("right: ");
+r.Append(t.ItemText(bar, t.MenuTitleItem()));
+r.Append(", hot ");
+r.Append(Label(t.ItemText(bar, t.MenuHotItem())));
+print(r.AsStr());
+u32 got = t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_ENTER));
+string e = string.From("enter: chose ");
+if (got == bar && t.Action() == ui.ACT_OPEN) e.Append(Label(t.ItemText(bar, t.Item())));
+e.Append(", open ");
+e.Append(Yes(t.MenuOpen()));
+print(e.AsStr());
+
+// a click outside an open menu closes it and does not reach the editor below
+t.OnEvent(Event.Of(EventKind.MouseDown, 2, 0, 1));
+t.LayoutCells(th, 80, 20);
+t.SetFocus(0);
+t.OnEvent(Event.Of(EventKind.MouseDown, 60, 15, 1));
+t.OnEvent(Event.Of(EventKind.MouseUp, 60, 15, 1));
+string o = string.From("click outside: open ");
+o.Append(Yes(t.MenuOpen()));
+o.Append(", editor focused ");
+o.Append(Yes(t.Focused() == ed));
+print(o.AsStr());
+
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_F1 + 9));
+print(State("F10", ref t, bar).AsStr());
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_ESCAPE));
+print(Line("escape: open ", Yes(t.MenuOpen())).AsStr());
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_A + 4).WithMods(MOD_ALT));
+print(Line("alt+e: title ", t.ItemText(bar, t.MenuTitleItem())).AsStr());
+
+// pointer: open File, move to Quit, release there
+t.OnEvent(Event.Of(EventKind.KeyDown, 0, 0, KEY_ESCAPE));
+t.OnEvent(Event.Of(EventKind.MouseDown, 2, 0, 1));
+t.LayoutCells(th, 80, 20);
+t.OnEvent(Event.Of(EventKind.MouseUp, 2, 0, 1));
+// entries start one row under the bar, inside the border: New, Open, Save, -, Quit
+t.OnEvent(Event.Of(EventKind.MouseMove, 3, 6, 0));
+u32 g2 = t.OnEvent(Event.Of(EventKind.MouseUp, 3, 6, 1));
+string q = string.From("release on Quit: chose ");
+if (g2 == bar && t.Action() == ui.ACT_OPEN) q.Append(Label(t.ItemText(bar, t.Item())));
+print(q.AsStr());
+
+string State(str what, ref ui.Tree t, u32 bar) {
+    string s = string.From(what);
+    s.Append(": open ");
+    s.Append(Yes(t.MenuOpen()));
+    if (t.MenuOpen()) {
+        s.Append(", title ");
+        s.Append(t.ItemText(bar, t.MenuTitleItem()));
+        if (t.MenuHotItem() < t.ItemCount(bar)) {
+            s.Append(", hot ");
+            s.Append(Label(t.ItemText(bar, t.MenuHotItem())));
+        }
+    }
+    return s;
+}
+
+string Hot(str what, ref ui.Tree t, u32 bar) {
+    string s = string.From(what);
+    s.Append(": ");
+    str label = t.ItemText(bar, t.MenuHotItem());
+    usize k = 0;
+    while (k < label.Len && label[k] != 9) k++;
+    s.Append(label[0..k]);
+    return s;
+}
+
+// An entry's label without its shortcut.
+str Label(str label) {
+    usize k = 0;
+    while (k < label.Len && label[k] != 9) k++;
+    return label[0..k];
+}
+
+string Line(str a, str b) {
+    string s = string.From(a);
+    s.Append(b);
+    return s;
+}
+
+str Yes(bool b) {
+    if (b) return "true";
+    return "false";
+}

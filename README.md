@@ -20,7 +20,7 @@ u32 save = t.Button(card, "Save", true);
 
 | Module | |
 |---|---|
-| [`envoui`](ui) | Components, layout, input, focus, drawing in pixels or terminal cells |
+| [`envoui`](ui) | Components, layout, input, focus, a menu bar, drawing in pixels or terminal cells |
 | [`envoui.edit`](edit) | Text buffers: cursors, selections, undo, search |
 | [`envoui.term`](term) | Terminals: screens, styles, keys |
 

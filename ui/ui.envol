@@ -36,6 +36,7 @@ public enum Kind {
     TextField,      // one line of text to edit
     Editor,         // a code editor: lines, a gutter, highlighting
     Palette,        // a command palette: a filter over items, shown above everything
+    MenuBar,        // menu titles across the top; each opens a menu of entries (menu.envol)
 }
 
 // Where children sit across a container (left to right in a column, top to bottom in
@@ -157,13 +158,22 @@ public struct Tree {
     i32 PtrY;
     string Clip;        // the clipboard, unless the system's is used
     bool SystemClip;
+    u32 MenuId;         // the menu bar whose menu is open, or 0
+    usize MenuTitle;    // the open menu's title item
+    usize MenuHot;      // its highlighted entry, or NO_ITEM
+    i32 MenuX;          // where the open menu is drawn (laid out)
+    i32 MenuY;
+    i32 MenuW;
+    i32 MenuH;
+    i32 MenuPad;
 
     public static Tree New() {
         Tree t = new Tree {
             Nodes = List<Node>.New(), Labels = List<string>.New(), Lists = List<Items>.New(),
             Bufs = List<edit.Buffer>.New(), Codes = List<Code>.New(), Focus = 0, Hover = 0,
             Pressed = 0, Drag = 0, Before = 0, Cells = false, RowH = 1, LineH = 1, Act = ACT_NONE,
-            ActItem = 0, PtrX = 0, PtrY = 0, Clip = string.New(), SystemClip = false
+            ActItem = 0, PtrX = 0, PtrY = 0, Clip = string.New(), SystemClip = false,
+            MenuId = 0, MenuTitle = NO_ITEM, MenuHot = NO_ITEM, MenuX = 0, MenuY = 0, MenuW = 0, MenuH = 0, MenuPad = 0
         };
         t.Make(Kind.Column, 0, "");         // 0: none
         t.Make(Kind.Column, 0, "");         // 1: the root
@@ -700,12 +710,27 @@ public struct Tree {
                 this.Lists.AsMutSlice()[at].Ends = ends;
                 w = x;
                 h = th.ControlHeight as i32;
+            } else if (d.K == Kind.MenuBar) {
+                // where each title ends
+                List<i32> ends = List<i32>.New();
+                Items[] ls = this.Lists.AsSlice();
+                usize at = d.Data as usize;
+                i32 x = 0;
+                for (usize i = 0; i < ls[at].Labels.Len(); i++) {
+                    if (ls[at].Depth.Get(i) != 0) continue;
+                    x += f.Measure(ls[at].Labels.AsSlice()[i].AsStr(), th.Body.Size) + 2 * th.M as i32;
+                    ends.Push(x);
+                }
+                this.Lists.AsMutSlice()[at].Ends = ends;
+                w = x;
+                h = th.Body.Line as i32 + 2 * th.S as i32;
             }
             mut Node[] ns = this.Nodes.AsMutSlice();
             ns[id as usize].MW = w;
             ns[id as usize].MH = h;
         }
         this.Solve(th, width, height);
+        if (this.MenuId != 0) this.PlaceMenu(th, width, false, this.MenuWidestPixels(f, th));
         this.EditorsPixels(f, th);
     }
 
@@ -748,12 +773,26 @@ public struct Tree {
                 this.Lists.AsMutSlice()[at].Ends = ends;
                 w = x;
                 h = 1;
+            } else if (d.K == Kind.MenuBar) {
+                List<i32> ends = List<i32>.New();
+                Items[] ls = this.Lists.AsSlice();
+                usize at = d.Data as usize;
+                i32 x = 0;
+                for (usize i = 0; i < ls[at].Labels.Len(); i++) {
+                    if (ls[at].Depth.Get(i) != 0) continue;
+                    x += Chars(ls[at].Labels.AsSlice()[i].AsStr()) + 2;      // " File "
+                    ends.Push(x);
+                }
+                this.Lists.AsMutSlice()[at].Ends = ends;
+                w = x;
+                h = 1;
             }
             mut Node[] ns = this.Nodes.AsMutSlice();
             ns[id as usize].MW = w;
             ns[id as usize].MH = h;
         }
         this.Solve(th, cols, rows);
+        if (this.MenuId != 0) this.PlaceMenu(th, cols, true, this.MenuWidestCells());
         this.EditorsCells();
     }
 
@@ -1360,6 +1399,7 @@ public struct Tree {
     }
 
     u32 PointerMove(ref this, i32 x, i32 y) {
+        if (this.MenuPointerMove(x, y)) return 0;
         this.Hover = this.HitTest(x, y);
         if (this.Drag == 0) return 0;
         Node d = this.N(this.Drag);
@@ -1385,6 +1425,8 @@ public struct Tree {
     }
 
     u32 PointerDown(ref this, i32 x, i32 y, u32 mods) {
+        u32 menu = 0;
+        if (this.MenuPointerDown(x, y, ref menu)) return menu;
         u32 split = this.SplitAt(x, y);
         if (split != 0 && this.OpenPaletteId() == 0) {
             this.Drag = split;
@@ -1448,6 +1490,11 @@ public struct Tree {
     }
 
     u32 PointerUp(ref this, i32 x, i32 y) {
+        u32 menu = 0;
+        if (this.MenuPointerUp(x, y, ref menu)) {
+            this.Pressed = 0;
+            return menu;
+        }
         this.Drag = 0;
         u32 hit = this.HitTest(x, y);
         u32 was = this.Pressed;
@@ -1472,6 +1519,8 @@ public struct Tree {
     // A key (KEY_*, with MOD_*) or a typed character (ch, key 0), for the focused
     // component.
     u32 Key(ref this, u32 key, u32 mods, u32 ch) {
+        u32 menu = 0;
+        if (this.MenuKey(key, mods, ch, ref menu)) return menu;
         u32 id = this.Focus;
         Kind k = this.N(id).K;
         if (id != 0 && (k == Kind.Editor || k == Kind.TextField)) {
@@ -1699,6 +1748,7 @@ public struct Tree {
         for (u32 id = 2; id < n; id++) {
             if (this.N(id).K == Kind.Palette && this.Showing(id)) this.DrawPalettePixels(ref c, f, th, id);
         }
+        this.DrawMenuPixels(ref c, f, th);
     }
 
     // The clip for drawing id: the scroll views it is in, and its own bounds for the
@@ -1799,6 +1849,8 @@ public struct Tree {
                 c.SetClip(d.X, d.Y, d.W, d.H);
                 c.FillRoundedRect(d.X + d.W - 6, top, 4, thumb, 2, Rgb(th.C.ControlEdge));
             }
+        } else if (d.K == Kind.MenuBar) {
+            this.DrawMenuBarPixels(ref c, f, th, id);
         } else if (d.K == Kind.ListView || d.K == Kind.TreeView) {
             // a sidebar's tint: between the surface and a raised one
             c.FillRect(d.X, d.Y, d.W, d.H, Mix(th.C.SurfaceRaised, th.C.Surface, 112));
@@ -1945,12 +1997,15 @@ public struct Tree {
                 if (l != b.Line) x1 += space;
                 c.FillRect(x0, ly, x1 - x0, lh, selection);
             }
-            // the text, run by run
-            List<u8> cls = Classify(t, cs[at].Keywords.AsStr(), cs[at].Comment.AsStr());
+            // the text, run by run, up to the right edge; syntax colors for the first
+            // CLASSIFY_MAX bytes of a line
+            List<u8> cls = Classify(Prefix(t, CLASSIFY_MAX), cs[at].Keywords.AsStr(), cs[at].Comment.AsStr());
+            i32[128] ascii;
+            for (usize k = 0; k < 128; k++) ascii[k] = -1;
             usize i = 0;
             i32 pen = 0;
             usize vcol = 0;
-            while (i < t.Len) {
+            while (i < t.Len && base0 + pen < right) {
                 usize n = CharLen(t, i);
                 if (t[i] == 9) {
                     usize w = tab - vcol % tab;
@@ -1959,10 +2014,10 @@ public struct Tree {
                     i += 1;
                     continue;
                 }
-                str ch = t[i..i + n];
-                i32 adv = f.Measure(ch, size);
+                i32 adv = CharWidth(f, t, i, n, size, ascii[0..128]);
                 if (base0 + pen + adv >= x && base0 + pen < right) {
-                    DrawLabel(ref c, f, base0 + pen, ly, lh, ch, size, TokenColor(th, cls.Get(i)));
+                    str ch = t[i..i + n];
+                    DrawLabel(ref c, f, base0 + pen, ly, lh, ch, size, TokenColor(th, ClassAt(cls, i)));
                 }
                 pen += adv;
                 vcol++;
@@ -2012,6 +2067,7 @@ public struct Tree {
         for (u32 id = 2; id < n; id++) {
             if (this.N(id).K == Kind.Palette && this.Showing(id)) this.DrawPaletteCells(ref s, th, id);
         }
+        this.DrawMenuCells(ref s, th);
     }
 
     // The clip for drawing id in cells; false when nothing of it can show.
@@ -2082,6 +2138,8 @@ public struct Tree {
                 term.Style st = term.Style.Plain().Fg(th.C.ControlEdge).Bg(this.BgAt(th, id));
                 for (i32 i = 0; i < thumb; i++) SetCell(ref s, d.X + d.W - 1, top + i, 0x2503, st);
             }
+        } else if (d.K == Kind.MenuBar) {
+            this.DrawMenuBarCells(ref s, th, id);
         } else if (d.K == Kind.ListView || d.K == Kind.TreeView) {
             this.DrawRowsCells(ref s, th, id, d.X, d.Y, d.W, d.H, this.BgAt(th, id));
         } else if (d.K == Kind.Tabs) {
@@ -2175,7 +2233,7 @@ public struct Tree {
                 if (l == bs[at].Cursor().Line) ink = th.C.Text;
                 PutCells(ref s, d.X + g - 1 - num.Len() as i32, ly, num.AsStr(), term.Style.Plain().Fg(ink).Bg(bg));
             }
-            List<u8> cls = Classify(t, cs[at].Keywords.AsStr(), cs[at].Comment.AsStr());
+            List<u8> cls = Classify(Prefix(t, CLASSIFY_MAX), cs[at].Keywords.AsStr(), cs[at].Comment.AsStr());
             usize i = 0;
             i32 v = 0;
             usize tab = 4;
@@ -2189,7 +2247,7 @@ public struct Tree {
                     if (!sel.IsEmpty() && !p.Before(sel.Start()) && p.Before(sel.End())) selected = true;
                     if (focused && sel.Head.Same(p)) cursor = true;
                 }
-                term.Style st = term.Style.Plain().Fg(TokenColor(th, cls.Get(i))).Bg(bg);
+                term.Style st = term.Style.Plain().Fg(TokenColor(th, ClassAt(cls, i))).Bg(bg);
                 if (selected) st = st.Bg(selBg);
                 if (cursor) st = st.Reverse();
                 i32 w = 1;
@@ -2241,7 +2299,7 @@ public struct Tree {
 }
 
 // Components that fill their container's width (in a column) or height (in a row).
-bool IsWide(Kind k) => k == Kind.ListView || k == Kind.TreeView || k == Kind.Tabs || k == Kind.Editor || k == Kind.TextField;
+bool IsWide(Kind k) => k == Kind.ListView || k == Kind.TreeView || k == Kind.Tabs || k == Kind.Editor || k == Kind.TextField || k == Kind.MenuBar;
 
 theme.TypeStyle TypeOf(in theme.Theme th, u8 style) {
     if (style == CAPTION) return th.Caption;
@@ -2348,6 +2406,8 @@ string Flatten(str t) {
 
 // The pixel offset of column col in line t (a tab reaching the next tab stop).
 i32 XOfPixels(in font.Font f, str t, usize col, u32 size, i32 space, usize tab) {
+    i32[128] ascii;
+    for (usize k = 0; k < 128; k++) ascii[k] = -1;
     i32 x = 0;
     usize v = 0;
     usize i = 0;
@@ -2358,7 +2418,7 @@ i32 XOfPixels(in font.Font f, str t, usize col, u32 size, i32 space, usize tab) 
             x += w as i32 * space;
             v += w;
         } else {
-            x += f.Measure(t[i..i + n], size);
+            x += CharWidth(f, t, i, n, size, ascii[0..128]);
             v++;
         }
         i += n;
@@ -2366,8 +2426,21 @@ i32 XOfPixels(in font.Font f, str t, usize col, u32 size, i32 space, usize tab) 
     return x;
 }
 
+// How wide the character at t[i] (n bytes) is; ASCII widths are measured once into
+// ascii (-1 until then), since a line can be megabytes of them.
+i32 CharWidth(in font.Font f, str t, usize i, usize n, u32 size, mut i32[] ascii) {
+    u8 c = t[i];
+    if (n == 1 && c < 128) {
+        if (ascii[c as usize] < 0) ascii[c as usize] = f.Measure(t[i..i + 1], size);
+        return ascii[c as usize];
+    }
+    return f.Measure(t[i..i + n], size);
+}
+
 // The column nearest pixel offset x in line t.
 usize ColAtPixels(in font.Font f, str t, i32 x, u32 size, i32 space, usize tab) {
+    i32[128] ascii;
+    for (usize k = 0; k < 128; k++) ascii[k] = -1;
     i32 at = 0;
     usize v = 0;
     usize i = 0;
@@ -2379,7 +2452,7 @@ usize ColAtPixels(in font.Font f, str t, i32 x, u32 size, i32 space, usize tab) 
             vw = tab - v % tab;
             w = vw as i32 * space;
         } else {
-            w = f.Measure(t[i..i + n], size);
+            w = CharWidth(f, t, i, n, size, ascii[0..128]);
         }
         if (x < at + w / 2) return i;
         at += w;
@@ -2433,6 +2506,24 @@ void AddNextMatch(ref edit.Buffer b) {
 
 // Highlighting: the class of each byte of a line (0 plain, 1 keyword, 2 string,
 // 3 number, 4 comment). Strings and comments end at the line's end.
+// Lines longer than this get syntax colors for their start only: classifying a line is
+// linear in its length, and a minified file can be one line of megabytes.
+const usize CLASSIFY_MAX = 4096;
+
+// The first n bytes of t at most, ending on a character boundary.
+str Prefix(str t, usize n) {
+    if (t.Len <= n) return t;
+    usize k = n;
+    while (k > 0 && t[k] & 0xC0 == 0x80) k--;
+    return t[0..k];
+}
+
+// The class of byte i, or plain text past the classified prefix.
+u8 ClassAt(in List<u8> cls, usize i) {
+    if (i < cls.Len()) return cls.Get(i);
+    return 0;
+}
+
 List<u8> Classify(str t, str keywords, str comment) {
     List<u8> c = List<u8>.New();
     for (usize i = 0; i < t.Len; i++) c.Push(0);
