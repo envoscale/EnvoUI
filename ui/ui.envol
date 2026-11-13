@@ -1800,6 +1800,8 @@ public struct Tree {
                 c.FillRoundedRect(d.X + d.W - 6, top, 4, thumb, 2, Rgb(th.C.ControlEdge));
             }
         } else if (d.K == Kind.ListView || d.K == Kind.TreeView) {
+            // a sidebar's tint: between the surface and a raised one
+            c.FillRect(d.X, d.Y, d.W, d.H, Mix(th.C.SurfaceRaised, th.C.Surface, 112));
             this.DrawRowsPixels(ref c, f, th, id, d.X, d.Y, d.W, d.H);
         } else if (d.K == Kind.Tabs) {
             this.DrawTabsPixels(ref c, f, th, id);
@@ -1843,12 +1845,14 @@ public struct Tree {
             i32 ry = y + r * rh;
             u32 ink = th.C.Text;
             if (row == ls[at].Sel) {
+                // a rounded selection, inset from the edges
                 u32 fill = th.C.SurfacePressed;
                 if (focused) {
                     fill = th.C.Accent;
                     ink = th.C.OnAccent;
                 }
-                c.FillRect(x, ry, w, rh, Rgb(fill));
+                i32 inset = th.Xs as i32 + 2;
+                c.FillRoundedRect(x + inset, ry + 1, w - 2 * inset, rh - 2, th.RadiusSmall as i32, Rgb(fill));
             }
             i32 tx = x + th.S as i32;
             if (tree) {
@@ -1871,6 +1875,7 @@ public struct Tree {
         Node d = this.N(id);
         Items[] ls = this.Lists.AsSlice();
         usize at = d.Data as usize;
+        c.FillRect(d.X, d.Y, d.W, d.H, Mix(th.C.SurfaceRaised, th.C.Surface, 112));
         c.FillRect(d.X, d.Y + d.H - 1, d.W, 1, Rgb(th.C.Separator));
         i32 start = d.X;
         for (usize i = 0; i < ls[at].Ends.Len() && i < ls[at].Labels.Len(); i++) {

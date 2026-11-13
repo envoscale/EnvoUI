@@ -5,7 +5,7 @@
 // expect: tabs 0,0 320x32
 // expect: files 0,32 126x168
 // expect: editor 131,32 189x168
-// expect: 664de38d533a4f3c0f4ae3017fa5a53fd5adf2bb719f8960d88dd3b8a7207c02
+// expect: 1017d6cc2726a3c4f0455cf736cd5b67bebfa1ace65ad17726c5fb8efdd11e2b
 // expect: tree item opened
 // expect: ratio 533
 // expect: files 0,32 167x168
@@ -13,10 +13,10 @@
 // expect: col 0
 // expect: anchor line 1
 // expect: head col 2
-// expect: 6d1876eba5a148fdc95b3f7aaf7d3b0c39985941803458de70e8280033cc06bd
+// expect: a92c124b4338fa7d70c823ae31a452589e19df8945118c5e4abc56f8cefc9d63
 // expect: scroll 3
 // expect: palette rows 76
-// expect: b96fcbd2433b7fe3ca4cdd96d6d140538d8cdf0c1f5a6047ba9e3aa6502f62ba
+// expect: a0113f68085af73f4cd3159431449a79d7da4fbf6f318581693aa495446555e2
 // expect: chose lil
 use envoui as ui;
 use envoui.edit;
